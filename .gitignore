@@ -1,0 +1,12 @@
+# Local datasets and generated artifacts
+/dataset/
+/docs/structure/
+/docs/trainval_annotations/
+/RF-DETR/data/
+/RF-DETR/runs/
+
+# Python cache and local test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.dist_test/
