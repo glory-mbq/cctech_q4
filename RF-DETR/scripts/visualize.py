@@ -32,7 +32,7 @@ COLOR_GT = (0, 0, 255)     # 红：GT 框
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="可视化 RF-DETR 裂纹检测结果（预测框 vs GT 框）。")
-    p.add_argument("--checkpoint", required=True, help="RF-DETR checkpoint（建议 checkpoint_best_ema.pth）")
+    p.add_argument("--checkpoint", required=True, help="RF-DETR checkpoint（建议 checkpoint_best_total.pth）")
     p.add_argument("--model-size", choices=tuple(MODEL_CLASSES), default="seg-large")
     p.add_argument("--coco-json", required=True, help="COCO 标注 JSON（val/test 的 _annotations.coco.json）")
     p.add_argument("--image-root", required=True, help="图像根目录")

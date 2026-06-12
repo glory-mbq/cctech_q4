@@ -50,9 +50,10 @@ python -c "import rfdetr; print('rfdetr ok')"
 
 期望第一条命令输出包含 `2.10.0+cu126 12.6`，且 `torch.cuda.is_available()` 为 `True`。
 
-## 当前数据
+## 数据准备
 
-原始官方数据：
+GitHub 仓库不包含官方数据和训练产物，只提交一个空的 `dataset/` 目录占位。使用前请从官方渠道获取
+CCTech Q4 数据，并在仓库根目录下整理成下面结构：
 
 ```text
 dataset/trainval/trainval.json  # 1285 张训练验证图，1652 个标注
@@ -61,7 +62,26 @@ dataset/test/test.json          # 301 张测试图，无标注
 dataset/test/images/
 ```
 
-当前 RF-DETR 数据集：
+也就是说，拿到官方数据后需要在空的 `dataset/` 下创建 `trainval/images/` 和
+`test/images/`，再把官方数据中的 `trainval.json`、训练验证图像、`test.json`、测试图像分别放到对应路径。
+
+本仓库的 `.gitignore` 会忽略 `dataset/` 下除 `dataset/.gitkeep` 之外的所有真实数据文件。
+
+---
+
+数据集导出命令：
+
+```bash
+python RF-DETR/scripts/prepare_dataset.py \
+  --raw-json dataset/trainval/trainval.json \
+  --image-root dataset/trainval \
+  --out-dir RF-DETR/data/full_valid_seed42 \
+  --val-ratio 0.2 \
+  --seed 42 \
+  --link-mode auto
+```
+
+导出 RF-DETR 训练数据后会生成：
 
 ```text
 RF-DETR/data/full_valid_seed42/
@@ -77,17 +97,6 @@ RF-DETR/data/full_valid_seed42/
 `full_valid_seed42` 是按 `seed=42` 和 `val-ratio=0.2` 从官方 `trainval` 导出的完整
 train/valid 划分。图像默认硬链接优先，失败时软链接，再失败复制。
 
-重新导出命令：
-
-```bash
-python RF-DETR/scripts/prepare_dataset.py \
-  --raw-json dataset/trainval/trainval.json \
-  --image-root dataset/trainval \
-  --out-dir RF-DETR/data/full_valid_seed42 \
-  --val-ratio 0.2 \
-  --seed 42 \
-  --link-mode auto
-```
 
 ## 训练
 
@@ -141,10 +150,10 @@ GPU 上触发低效或不稳定的自动精度选择。若更换到支持混合�
 - 训练设备：`cuda`，实际训练配置记录为 4 GPU DDP
 - 训练集：`RF-DETR/data/full_valid_seed42/train`
 - 内置验证：bbox-only，跳过 segm mask 插值
-- 最佳权重：
+- 最佳权重：推荐使用 `checkpoint_best_total.pth`
+  - `RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth`
   - `RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_ema.pth`
   - `RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_regular.pth`
-  - `RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth`
 
 ## 评估
 
@@ -153,7 +162,7 @@ GPU 上触发低效或不稳定的自动精度选择。若更换到支持混合�
 ```bash
 CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/eval.py \
   --model-size seg-large \
-  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_ema.pth \
+  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth \
   --val-json RF-DETR/data/full_valid_seed42/valid/_annotations.coco.json \
   --image-root RF-DETR/data/full_valid_seed42/valid \
   --map-score-thr 0.05 \
@@ -195,7 +204,7 @@ large_avg_time_ms=590.0137849152088
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/visualize.py \
-  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_ema.pth \
+  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth \
   --coco-json RF-DETR/data/full_valid_seed42/valid/_annotations.coco.json \
   --image-root RF-DETR/data/full_valid_seed42/valid \
   --out-dir RF-DETR/runs/v100_4gpu_seg_large_bboxval/vis_50 \
@@ -206,7 +215,7 @@ CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/visualize.py \
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/visualize.py \
-  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_ema.pth \
+  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth \
   --coco-json <测试集>/_annotations.coco.json \
   --image-root <测试集图像目录> \
   --out-dir RF-DETR/runs/vis_test \
@@ -226,7 +235,7 @@ CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/visualize.py \
 CUDA_VISIBLE_DEVICES=0 python RF-DETR/scripts/infer_test.py \
   --test-json dataset/test/test.json \
   --image-root dataset/test \
-  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_ema.pth \
+  --checkpoint RF-DETR/runs/v100_4gpu_seg_large_bboxval/checkpoint_best_total.pth \
   --model-size seg-large \
   --out RF-DETR/runs/v100_4gpu_seg_large_bboxval/results.json \
   --device cuda:0 \

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -166,6 +168,7 @@ def run_5_fold_cv(args: argparse.Namespace) -> None:
     run_root = Path(args.work_dir) / "cv_5fold"
     data_root = ROOT / "data" / "cv_5fold"
     summary_path = run_root / "cv_summary.json"
+    config = _cv_run_config(args, "5-fold-cv")
     _warn_cv_resume(args)
     fold_metrics: list[dict[str, Any]] = []
 
@@ -174,7 +177,9 @@ def run_5_fold_cv(args: argparse.Namespace) -> None:
         result_path = fold_root / "fold_metric.json"
         if result_path.exists():
             LOGGER.info("fold_%d 已完成，跳过训练: %s", fold_idx, result_path)
-            fold_metrics.append(read_json(result_path))
+            saved = read_json(result_path)
+            _ensure_cv_result_matches(saved, config, result_path)
+            fold_metrics.append(_metric_payload(saved))
             continue
         fold_data = data_root / f"fold_{fold_idx}"
         write_rfdetr_dataset(raw_data, args.image_root, fold_data, {"train": train_ids, "valid": valid_ids}, args.link_mode)
@@ -184,11 +189,16 @@ def run_5_fold_cv(args: argparse.Namespace) -> None:
         metric = _evaluate_checkpoint_on_coco(args, checkpoint, valid_coco_path, fold_data / "valid", fold_root / "eval")
         metric["fold"] = fold_idx
         metric["checkpoint"] = _as_posix_path(checkpoint)
+        metric["config"] = config
         write_json(metric, result_path)
         fold_metrics.append(metric)
-        _write_cv_summary(summary_path, {"mode": "5-fold-cv", "fold_metrics": fold_metrics, "summary": _summary(fold_metrics)}, complete=False)
+        _write_cv_summary(
+            summary_path,
+            {"mode": "5-fold-cv", "config": config, "fold_metrics": fold_metrics, "summary": _summary(fold_metrics)},
+            complete=False,
+        )
 
-    output = {"mode": "5-fold-cv", "fold_metrics": fold_metrics, "summary": _summary(fold_metrics)}
+    output = {"mode": "5-fold-cv", "config": config, "fold_metrics": fold_metrics, "summary": _summary(fold_metrics)}
     _write_cv_summary(summary_path, output, complete=True)
     LOGGER.info("5-fold-cv 完成: %s", summary_path)
 
@@ -202,6 +212,7 @@ def run_5_fold_cv_standalone_test(args: argparse.Namespace) -> None:
     run_root = Path(args.work_dir) / "cv_5fold_standalone_test"
     data_root = ROOT / "data" / "cv_5fold_standalone_test"
     summary_path = run_root / "cv_summary.json"
+    config = _cv_run_config(args, "5-fold-cv-standalone-test")
     _warn_cv_resume(args)
     test_data = data_root / "test_split"
     write_rfdetr_dataset(raw_data, args.image_root, test_data, {"test": test_ids}, args.link_mode)
@@ -220,6 +231,7 @@ def run_5_fold_cv_standalone_test(args: argparse.Namespace) -> None:
         if result_path.exists():
             LOGGER.info("fold_%d 已完成，跳过训练: %s", fold_idx, result_path)
             saved = read_json(result_path)
+            _ensure_cv_result_matches(saved, config, result_path)
             model_predictions.append(saved["preds"])
             model_times.append(saved["times"])
             per_model_metrics.append(saved["metric"])
@@ -231,7 +243,7 @@ def run_5_fold_cv_standalone_test(args: argparse.Namespace) -> None:
         metric = _split_eval_q4(preds, gts, times, test_coco, args)
         metric["fold"] = fold_idx
         metric["checkpoint"] = _as_posix_path(checkpoint)
-        write_json({"metric": metric, "preds": preds, "times": times}, result_path)
+        write_json({"config": config, "metric": metric, "preds": preds, "times": times}, result_path)
         model_predictions.append(preds)
         model_times.append(times)
         per_model_metrics.append(metric)
@@ -239,6 +251,7 @@ def run_5_fold_cv_standalone_test(args: argparse.Namespace) -> None:
             summary_path,
             {
                 "mode": "5-fold-cv-standalone-test",
+                "config": config,
                 "test_ratio": args.test_ratio,
                 "map_score_thr": args.map_score_thr,
                 "q4_score_thr": args.q4_score_thr,
@@ -253,6 +266,7 @@ def run_5_fold_cv_standalone_test(args: argparse.Namespace) -> None:
     ensemble_metrics = _split_eval_q4(ensemble_preds, gts, ensemble_times, test_coco, args)
     output = {
         "mode": "5-fold-cv-standalone-test",
+        "config": config,
         "test_ratio": args.test_ratio,
         "map_score_thr": args.map_score_thr,
         "q4_score_thr": args.q4_score_thr,
@@ -275,6 +289,7 @@ def run_5_time_train_valid_test(args: argparse.Namespace) -> None:
     run_root = Path(args.work_dir) / "repeat_5_train_valid_test"
     data_root = ROOT / "data" / "repeat_5_train_valid_test"
     summary_path = run_root / "cv_summary.json"
+    config = _cv_run_config(args, "5-time-train+valid+test")
     _warn_cv_resume(args)
     run_metrics: list[dict[str, Any]] = []
 
@@ -284,7 +299,9 @@ def run_5_time_train_valid_test(args: argparse.Namespace) -> None:
         result_path = run_dir / "run_metric.json"
         if result_path.exists():
             LOGGER.info("run_%d 已完成，跳过训练: %s", run_idx, result_path)
-            run_metrics.append(read_json(result_path))
+            saved = read_json(result_path)
+            _ensure_cv_result_matches(saved, config, result_path)
+            run_metrics.append(_metric_payload(saved))
             continue
         train_pool_ids, test_ids = split_ids(samples, args.image_root, args.test_ratio, seed)
         train_pool_samples = subset_samples(samples, set(train_pool_ids))
@@ -309,12 +326,14 @@ def run_5_time_train_valid_test(args: argparse.Namespace) -> None:
         metric["run"] = run_idx
         metric["seed"] = seed
         metric["checkpoint"] = _as_posix_path(checkpoint)
+        metric["config"] = config
         write_json(metric, result_path)
         run_metrics.append(metric)
         _write_cv_summary(
             summary_path,
             {
                 "mode": "5-time-train+valid+test",
+                "config": config,
                 "repeat_times": args.repeat_times,
                 "train_ratio": 1.0 - args.test_ratio - args.repeat_val_ratio,
                 "val_ratio": args.repeat_val_ratio,
@@ -327,6 +346,7 @@ def run_5_time_train_valid_test(args: argparse.Namespace) -> None:
 
     output = {
         "mode": "5-time-train+valid+test",
+        "config": config,
         "repeat_times": args.repeat_times,
         "train_ratio": 1.0 - args.test_ratio - args.repeat_val_ratio,
         "val_ratio": args.repeat_val_ratio,
@@ -398,6 +418,64 @@ def _warn_cv_resume(args: argparse.Namespace) -> None:
     """CV/重复模式下全局 --resume 无意义，按折自动续训，提示用户。"""
     if args.resume and _is_rank_zero():
         LOGGER.warning("CV/重复模式忽略全局 --resume；改为各折从自身 last.ckpt 自动续训")
+
+
+def _cv_run_config(args: argparse.Namespace, mode: str) -> dict[str, Any]:
+    """记录影响 CV/重复实验可复用性的关键参数，避免同一 work-dir 混用旧结果。"""
+    params = {
+        "mode": mode,
+        "raw_json": str(args.raw_json),
+        "image_root": str(args.image_root),
+        "model_size": args.model_size,
+        "resolution": args.resolution or DEFAULT_RESOLUTION[args.model_size],
+        "batch_size": args.batch_size,
+        "grad_accum_steps": args.grad_accum_steps,
+        "max_epochs": args.max_epochs,
+        "num_workers": args.num_workers,
+        "lr": args.lr,
+        "lr_encoder": args.lr_encoder,
+        "weight_decay": args.weight_decay,
+        "checkpoint_interval": args.checkpoint_interval,
+        "eval_interval": args.eval_interval,
+        "num_select": args.num_select,
+        "early_stopping": args.early_stopping,
+        "early_stopping_patience": args.early_stopping_patience,
+        "precision": args.precision,
+        "val_bbox_only": args.val_bbox_only,
+        "link_mode": args.link_mode,
+        "cv_seed": args.cv_seed,
+        "cv_folds": args.cv_folds,
+        "repeat_times": args.repeat_times,
+        "test_ratio": args.test_ratio,
+        "repeat_val_ratio": args.repeat_val_ratio,
+        "map_score_thr": args.map_score_thr,
+        "q4_score_thr": args.q4_score_thr,
+        "tile_size": args.tile_size,
+        "stride": args.stride,
+        "large_thr": args.large_thr,
+        "vote_iou": args.vote_iou,
+        "fp16_eval": args.fp16,
+        "optimize_eval": args.optimize,
+        "use_global": args.use_global,
+        "checkpoint_selection": "checkpoint_best_total_first",
+    }
+    serialized = json.dumps(params, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"hash": hashlib.sha256(serialized.encode("utf-8")).hexdigest(), "params": params}
+
+
+def _ensure_cv_result_matches(saved: Any, expected_config: dict[str, Any], path: Path) -> None:
+    if not isinstance(saved, dict) or saved.get("config") != expected_config:
+        actual_hash = saved.get("config", {}).get("hash") if isinstance(saved, dict) else None
+        raise ValueError(
+            "已存在的 CV 结果与当前参数不匹配，拒绝复用旧结果。"
+            f" path={path}, expected_hash={expected_config['hash']}, actual_hash={actual_hash}. "
+            "请更换 --work-dir，或确认旧结果不需要后手动删除对应 fold/run 目录。"
+        )
+
+
+def _metric_payload(saved: dict[str, Any]) -> dict[str, Any]:
+    metric = saved.get("metric")
+    return metric if isinstance(metric, dict) else saved
 
 
 def _train_one(
@@ -800,6 +878,10 @@ def _evaluate_checkpoint_on_coco(
             "metrics": metric,
             "predictions": preds,
             "per_image_times": build_per_image_times(coco, times, large_thr=args.large_thr),
+            "checkpoint": _as_posix_path(checkpoint),
+            "map_score_thr": args.map_score_thr,
+            "q4_score_thr": args.q4_score_thr,
+            "bbox_only": bool(getattr(args, "val_bbox_only", False)),
         },
         out_dir / "q4_eval.json",
     )
@@ -812,6 +894,7 @@ def _predict_checkpoint_on_coco(
     coco: dict[str, Any],
     image_root: Path,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, float]]:
+    bbox_only = bool(getattr(args, "val_bbox_only", False))
     predictor = RFDETRWrapper(
         checkpoint=checkpoint,
         model_size=args.model_size,
@@ -819,6 +902,7 @@ def _predict_checkpoint_on_coco(
         score_thr=min(args.map_score_thr, args.q4_score_thr),
         fp16=args.fp16,
         optimize=args.optimize,
+        bbox_only=bbox_only,
     )
     return predict_coco_images(
         predictor,
@@ -828,6 +912,7 @@ def _predict_checkpoint_on_coco(
         stride=args.stride,
         large_thr=args.large_thr,
         use_global=args.use_global,
+        bbox_only=bbox_only,
     )
 
 
@@ -892,15 +977,22 @@ def _box_iou(a: dict[str, Any], b: dict[str, Any]) -> float:
 
 
 def _summary(metrics: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    excluded_keys = {"fold", "run", "seed", "num_images"}
     numeric_keys = sorted(
-        key
-        for metric in metrics
-        for key, value in metric.items()
-        if isinstance(value, int | float) and key != "num_images"
+        {
+            key
+            for metric in metrics
+            for key, value in metric.items()
+            if isinstance(value, int | float) and not isinstance(value, bool) and key not in excluded_keys
+        }
     )
     result: dict[str, dict[str, float]] = {}
     for key in numeric_keys:
-        values = [float(metric[key]) for metric in metrics if key in metric]
+        values = [
+            float(metric[key])
+            for metric in metrics
+            if key in metric and isinstance(metric[key], int | float) and not isinstance(metric[key], bool)
+        ]
         result[key] = {"mean": mean(values) if values else 0.0, "std": pstdev(values) if len(values) > 1 else 0.0}
     return result
 

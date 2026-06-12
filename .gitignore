@@ -1,5 +1,6 @@
 # Local datasets and generated artifacts
-/dataset/
+/dataset/*
+!/dataset/.gitkeep
 /docs/structure/
 /docs/trainval_annotations/
 /RF-DETR/data/
